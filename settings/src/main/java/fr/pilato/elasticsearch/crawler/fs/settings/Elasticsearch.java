@@ -47,6 +47,7 @@ public class Elasticsearch {
     private String password;
     private String pipeline;
     private String pathPrefix;
+    private Boolean sslVerification;
 
     public Elasticsearch() {
 
@@ -54,7 +55,7 @@ public class Elasticsearch {
 
     private Elasticsearch(List<ServerUrl> nodes, String index, String indexFolder, int bulkSize,
                           TimeValue flushInterval, ByteSizeValue byteSize, String username, String password, String pipeline,
-                          String pathPrefix) {
+                          String pathPrefix, Boolean sslVerification) {
         this.nodes = nodes;
         this.index = index;
         this.indexFolder = indexFolder;
@@ -65,6 +66,7 @@ public class Elasticsearch {
         this.password = password;
         this.pipeline = pipeline;
         this.pathPrefix = pathPrefix;
+        this.sslVerification = sslVerification;
     }
 
     public static Builder builder() {
@@ -109,6 +111,14 @@ public class Elasticsearch {
 
     public ByteSizeValue getByteSize() {
         return byteSize;
+    }
+
+    public Boolean getSslVerification() {
+        return sslVerification;
+    }
+
+    public void setSslVerification(Boolean sslVerification) {
+        this.sslVerification = sslVerification;
     }
 
     public String getUsername() {
@@ -156,6 +166,7 @@ public class Elasticsearch {
         private String password = null;
         private String pipeline = null;
         private String pathPrefix = null;
+        private Boolean sslVerification = Boolean.TRUE;
 
         public Builder setNodes(List<ServerUrl> nodes) {
             this.nodes = nodes;
@@ -215,8 +226,13 @@ public class Elasticsearch {
             return this;
         }
 
+        public Builder setSSlVerification(Boolean sslVerification) {
+            this.sslVerification = sslVerification;
+            return this;
+        }
+
         public Elasticsearch build() {
-            return new Elasticsearch(nodes, index, indexFolder, bulkSize, flushInterval, byteSize, username, password, pipeline, pathPrefix);
+            return new Elasticsearch(nodes, index, indexFolder, bulkSize, flushInterval, byteSize, username, password, pipeline, pathPrefix, sslVerification);
         }
     }
 

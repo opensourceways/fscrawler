@@ -20,19 +20,8 @@
 package fr.pilato.elasticsearch.crawler.fs.client.v7;
 
 
-import fr.pilato.elasticsearch.crawler.fs.client.ESBoolQuery;
-import fr.pilato.elasticsearch.crawler.fs.client.ESDocumentField;
-import fr.pilato.elasticsearch.crawler.fs.client.ESHighlightField;
-import fr.pilato.elasticsearch.crawler.fs.client.ESMatchQuery;
-import fr.pilato.elasticsearch.crawler.fs.client.ESPrefixQuery;
-import fr.pilato.elasticsearch.crawler.fs.client.ESQuery;
-import fr.pilato.elasticsearch.crawler.fs.client.ESRangeQuery;
-import fr.pilato.elasticsearch.crawler.fs.client.ESSearchHit;
-import fr.pilato.elasticsearch.crawler.fs.client.ESSearchRequest;
-import fr.pilato.elasticsearch.crawler.fs.client.ESSearchResponse;
-import fr.pilato.elasticsearch.crawler.fs.client.ESTermQuery;
-import fr.pilato.elasticsearch.crawler.fs.client.ESTermsAggregation;
 import fr.pilato.elasticsearch.crawler.fs.client.ElasticsearchClient;
+import fr.pilato.elasticsearch.crawler.fs.client.*;
 import fr.pilato.elasticsearch.crawler.fs.framework.JsonUtil;
 import fr.pilato.elasticsearch.crawler.fs.settings.Elasticsearch;
 import fr.pilato.elasticsearch.crawler.fs.settings.FsSettings;
@@ -41,6 +30,7 @@ import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.client.CredentialsProvider;
 import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.http.nio.conn.ssl.SSLIOSessionStrategy;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.ElasticsearchStatusException;
@@ -60,12 +50,7 @@ import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.ingest.GetPipelineRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.client.Request;
-import org.elasticsearch.client.RequestOptions;
-import org.elasticsearch.client.Response;
-import org.elasticsearch.client.RestClient;
-import org.elasticsearch.client.RestClientBuilder;
-import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.client.*;
 import org.elasticsearch.client.core.MainResponse;
 import org.elasticsearch.client.indices.CreateIndexRequest;
 import org.elasticsearch.client.indices.GetIndexRequest;
@@ -84,8 +69,14 @@ import org.elasticsearch.search.aggregations.bucket.terms.Terms;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.fetch.subphase.highlight.HighlightBuilder;
 
+import javax.net.ssl.*;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -93,11 +84,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
-import static fr.pilato.elasticsearch.crawler.fs.framework.FsCrawlerUtil.INDEX_SETTINGS_FILE;
-import static fr.pilato.elasticsearch.crawler.fs.framework.FsCrawlerUtil.INDEX_SETTINGS_FOLDER_FILE;
-import static fr.pilato.elasticsearch.crawler.fs.framework.FsCrawlerUtil.extractMajorVersion;
-import static fr.pilato.elasticsearch.crawler.fs.framework.FsCrawlerUtil.isNullOrEmpty;
-import static fr.pilato.elasticsearch.crawler.fs.framework.FsCrawlerUtil.readJsonFile;
+import static fr.pilato.elasticsearch.crawler.fs.framework.FsCrawlerUtil.*;
 import static org.elasticsearch.action.support.IndicesOptions.LENIENT_EXPAND_OPEN;
 
 /**
@@ -349,6 +336,25 @@ public class ElasticsearchClientV7 implements ElasticsearchClient {
         return INDEX_TYPE_DOC;
     }
 
+    private static TrustManager[] trustAllCerts = new TrustManager[]{new X509TrustManager() {
+
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {}
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {}
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() { return null; }
+    }};
+
+    public static class NullHostNameVerifier implements HostnameVerifier {
+
+        @Override
+        public boolean verify(String arg0, SSLSession arg1) { return true; }
+
+    }
+
     @Override
     public void index(String index, String id, String json, String pipeline) {
         bulkProcessor.add(new IndexRequest(index).id(id).setPipeline(pipeline).source(json, XContentType.JSON));
@@ -390,12 +396,27 @@ public class ElasticsearchClientV7 implements ElasticsearchClient {
             builder.setPathPrefix(settings.getPathPrefix());
         }
 
-        if (settings.getUsername() != null) {
-            CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
-            credentialsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(settings.getUsername(), settings.getPassword()));
-            builder.setHttpClientConfigCallback(httpClientBuilder ->
-                    httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider));
-        }
+        builder.setHttpClientConfigCallback(httpClientBuilder -> {
+            if (!settings.getSslVerification()) {
+                SSLContext sc;
+                try {
+                    sc = SSLContext.getInstance("SSL");
+                    sc.init(null, trustAllCerts, new SecureRandom());
+                } catch (KeyManagementException | NoSuchAlgorithmException e) {
+                    logger.warn("Failed to get SSL Context", e);
+                    throw new RuntimeException(e);
+                }
+                httpClientBuilder.setSSLStrategy(new SSLIOSessionStrategy(sc, new NullHostNameVerifier()));
+            }
+
+            if (settings.getUsername() != null) {
+                CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+                credentialsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(settings.getUsername(), settings.getPassword()));
+                httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider);
+            }
+
+            return httpClientBuilder;
+        });
 
         return builder;
     }

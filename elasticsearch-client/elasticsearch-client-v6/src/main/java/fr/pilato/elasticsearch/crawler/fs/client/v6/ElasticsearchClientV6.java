@@ -41,6 +41,7 @@ import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.client.CredentialsProvider;
 import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.http.nio.conn.ssl.SSLIOSessionStrategy;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.ElasticsearchStatusException;
@@ -84,8 +85,14 @@ import org.elasticsearch.search.aggregations.bucket.terms.Terms;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.fetch.subphase.highlight.HighlightBuilder;
 
+import javax.net.ssl.*;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -369,6 +376,25 @@ public class ElasticsearchClientV6 implements ElasticsearchClient {
         return INDEX_TYPE_DOC;
     }
 
+    private static TrustManager[] trustAllCerts = new TrustManager[]{new X509TrustManager() {
+
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {}
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {}
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() { return null; }
+    }};
+
+    public static class NullHostNameVerifier implements HostnameVerifier {
+
+        @Override
+        public boolean verify(String arg0, SSLSession arg1) { return true; }
+
+    }
+
     @Override
     public void index(String index, String id, String json, String pipeline) {
         bulkProcessor.add(new IndexRequest(index, getDefaultTypeName(), id).setPipeline(pipeline).source(json, XContentType.JSON));
@@ -412,12 +438,27 @@ public class ElasticsearchClientV6 implements ElasticsearchClient {
             builder.setPathPrefix(settings.getPathPrefix());
         }
 
-        if (settings.getUsername() != null) {
-            CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
-            credentialsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(settings.getUsername(), settings.getPassword()));
-            builder.setHttpClientConfigCallback(httpClientBuilder ->
-                    httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider));
-        }
+        builder.setHttpClientConfigCallback(httpClientBuilder -> {
+            if (!settings.getSslVerification()) {
+                SSLContext sc;
+                try {
+                    sc = SSLContext.getInstance("SSL");
+                    sc.init(null, trustAllCerts, new SecureRandom());
+                } catch (KeyManagementException | NoSuchAlgorithmException e) {
+                    logger.warn("Failed to get SSL Context", e);
+                    throw new RuntimeException(e);
+                }
+                httpClientBuilder.setSSLStrategy(new SSLIOSessionStrategy(sc, new NullHostNameVerifier()));
+            }
+
+            if (settings.getUsername() != null) {
+                CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+                credentialsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(settings.getUsername(), settings.getPassword()));
+                httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider);
+            }
+
+            return httpClientBuilder;
+        });
 
         return builder;
     }
