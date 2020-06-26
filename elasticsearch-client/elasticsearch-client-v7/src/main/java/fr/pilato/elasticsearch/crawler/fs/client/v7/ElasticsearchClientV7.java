@@ -397,17 +397,15 @@ public class ElasticsearchClientV7 implements ElasticsearchClient {
         }
 
         builder.setHttpClientConfigCallback(httpClientBuilder -> {
-            if (!settings.getSslVerification()) {
-                SSLContext sc;
-                try {
-                    sc = SSLContext.getInstance("SSL");
-                    sc.init(null, trustAllCerts, new SecureRandom());
-                } catch (KeyManagementException | NoSuchAlgorithmException e) {
-                    logger.warn("Failed to get SSL Context", e);
-                    throw new RuntimeException(e);
-                }
-                httpClientBuilder.setSSLStrategy(new SSLIOSessionStrategy(sc, new NullHostNameVerifier()));
+            SSLContext sc;
+            try {
+                sc = SSLContext.getInstance("SSL");
+                sc.init(null, trustAllCerts, new SecureRandom());
+            } catch (KeyManagementException | NoSuchAlgorithmException e) {
+                logger.warn("Failed to get SSL Context", e);
+                throw new RuntimeException(e);
             }
+            httpClientBuilder.setSSLStrategy(new SSLIOSessionStrategy(sc, new NullHostNameVerifier()));
 
             if (settings.getUsername() != null) {
                 CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
